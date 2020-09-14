@@ -10,13 +10,17 @@ import (
 	"net/url"
 	"os"
 	"path"
-	"strings"
 
 	"github.com/mickael-kerjean/filestash/server/common"
 	s3 "github.com/mickael-kerjean/filestash/server/plugin/plg_backend_s3"
 )
 
 var wioCache common.AppCache
+
+// UserResponse user response
+type UserResponse struct {
+	Username string `json:"username"`
+}
 
 // RootResponse root response
 type RootResponse struct {
@@ -35,6 +39,7 @@ type WorkspaceResponse struct {
 	OwnerID  string       `json:"owner_id"`
 	RootID   string       `json:"root_id"`
 	Root     RootResponse `json:"root"`
+	Owner    UserResponse `json:"owner"`
 }
 
 // TokenResponse token response
@@ -60,6 +65,7 @@ type TokenNodeWrapper struct {
 	Node  NodeResponse  `json:"node"`
 }
 
+// TokenSearchResponseWorkspacePart part of TokenSearchResponse
 type TokenSearchResponseWorkspacePart struct {
 	Path      string            `json:"path"`
 	Workspace WorkspaceResponse `json:"workspace"`
@@ -166,8 +172,9 @@ func (w WorkspacesBackend) LoginForm() common.Form {
 	}
 }
 
-// Meta what does this do
+// Meta describes capabilities for a path
 func (w WorkspacesBackend) Meta(path string) common.Metadata {
+	common.Log.Info("PATH META %s", path)
 	if path == "/" {
 		return common.Metadata{
 			CanCreateFile: common.NewBool(false),
@@ -177,54 +184,6 @@ func (w WorkspacesBackend) Meta(path string) common.Metadata {
 		}
 	}
 	return common.Metadata{}
-}
-
-func (w WorkspacesBackend) request(method string, path string, body []byte, data interface{}) error {
-	u, _ := url.ParseRequestURI(w.params["endpoint"])
-	u.Path = path
-	req, _ := http.NewRequest(method, fmt.Sprintf("%v", u), nil)
-	req.Header.Add("Authorization", fmt.Sprintf("Bearer %v", w.token))
-	if body != nil {
-		bodyReader := bytes.NewBuffer(body)
-		bodyCloser := ioutil.NopCloser(bodyReader)
-		req.Body = bodyCloser
-	}
-	resp, err := w.client.Do(req)
-	if err != nil {
-		return err
-	}
-	err = json.NewDecoder(resp.Body).Decode(data)
-	return err
-}
-
-func (w WorkspacesBackend) s3Init(terms []string) (string, *s3.S3Backend, error) {
-	data := TokenSearchResponse{}
-	jsonValue, _ := json.Marshal(map[string][]string{"search_terms": terms})
-	reqErr := w.request("POST", "/api/token/search", jsonValue, &data)
-	if reqErr != nil {
-		return "", nil, reqErr
-	}
-	for key := range data.Workspaces {
-		ws := data.Workspaces[key]
-		s3config := s3.S3Backend{}
-		s3params := map[string]string{
-			"access_key_id":     data.Tokens[0].Token.AccessKey,
-			"secret_access_key": data.Tokens[0].Token.SecretKey,
-			"session_token":     data.Tokens[0].Token.SessionToken,
-			"path":              "",
-			"region":            data.Tokens[0].Node.Region,
-			"endpoint":          data.Tokens[0].Node.APIURL,
-			"encryption_key":    "",
-		}
-		backend, err := s3config.Init(s3params, w.app)
-		if err != nil {
-			return "", nil, err
-		}
-		p := path.Join(ws.Workspace.Root.Bucket, ws.Workspace.Root.BasePath, ws.Workspace.BasePath)
-		p = fmt.Sprintf("/%s", path.Join(p, ws.Path)) // Always include root slash
-		return p, backend.(*s3.S3Backend), nil
-	}
-	return "", nil, fmt.Errorf("Something bad")
 }
 
 // Ls gets workspace dir contents
@@ -258,205 +217,107 @@ func (w WorkspacesBackend) Ls(path string) (files []os.FileInfo, err error) {
 	return s3backend.Ls(p)
 }
 
+// Cat get bytes
 func (w WorkspacesBackend) Cat(path string) (io.ReadCloser, error) {
-	// p := s.path(path)
-	// client := s3.New(s.createSession(p.bucket))
-
-	// input := &s3.GetObjectInput{
-	// 	Bucket: aws.String(p.bucket),
-	// 	Key:    aws.String(p.path),
-	// }
-	// if s.params["encryption_key"] != "" {
-	// 	input.SSECustomerAlgorithm = aws.String("AES256")
-	// 	input.SSECustomerKey = aws.String(s.params["encryption_key"])
-	// }
-	// obj, err := client.GetObject(input)
-	// if err != nil {
-	// 	awsErr, ok := err.(awserr.Error)
-	// 	if ok == false {
-	// 		return nil, err
-	// 	}
-	// 	if awsErr.Code() == "InvalidRequest" && strings.Contains(awsErr.Message(), "encryption") {
-	// 		input.SSECustomerAlgorithm = nil
-	// 		input.SSECustomerKey = nil
-	// 		obj, err = client.GetObject(input)
-	// 		return obj.Body, err
-	// 	} else if awsErr.Code() == "InvalidArgument" && strings.Contains(awsErr.Message(), "secret key was invalid") {
-	// 		return nil, NewError("This file is encrypted file, you need the correct key!", 400)
-	// 	} else if awsErr.Code() == "AccessDenied" {
-	// 		return nil, ErrNotAllowed
-	// 	}
-	// 	return nil, err
-	// }
-	stringReader := strings.NewReader("shiny!")
-	stringReadCloser := ioutil.NopCloser(stringReader)
-	return stringReadCloser, nil
+	p, s3backend, initErr := w.s3Init([]string{path})
+	if initErr != nil {
+		return nil, initErr
+	}
+	return s3backend.Cat(p)
 }
 
+// Mkdir make directory
 func (w WorkspacesBackend) Mkdir(path string) error {
-	// p := s.path(path)
-	// client := s3.New(s.createSession(p.bucket))
-
-	// if p.path == "" {
-	// 	_, err := client.CreateBucket(&s3.CreateBucketInput{
-	// 		Bucket: aws.String(path),
-	// 	})
-	// 	return err
-	// }
-	// _, err := client.PutObject(&s3.PutObjectInput{
-	// 	Bucket: aws.String(p.bucket),
-	// 	Key:    aws.String(p.path),
-	// })
-	// return err
-	return nil
+	p, s3backend, initErr := w.s3Init([]string{path})
+	if initErr != nil {
+		return initErr
+	}
+	return s3backend.Mkdir(p)
 }
 
+// Rm Remove
 func (w WorkspacesBackend) Rm(path string) error {
-	// p := s.path(path)
-	// client := s3.New(s.createSession(p.bucket))
-	// if p.bucket == "" {
-	// 	return ErrNotFound
-	// } else if strings.HasSuffix(path, "/") == false {
-	// 	_, err := client.DeleteObject(&s3.DeleteObjectInput{
-	// 		Bucket: aws.String(p.bucket),
-	// 		Key:    aws.String(p.path),
-	// 	})
-	// 	return err
-	// }
-
-	// objs, err := client.ListObjects(&s3.ListObjectsInput{
-	// 	Bucket:    aws.String(p.bucket),
-	// 	Prefix:    aws.String(p.path),
-	// 	Delimiter: aws.String("/"),
-	// })
-	// if err != nil {
-	// 	return err
-	// }
-	// for _, obj := range objs.Contents {
-	// 	_, err := client.DeleteObject(&s3.DeleteObjectInput{
-	// 		Bucket: aws.String(p.bucket),
-	// 		Key:    obj.Key,
-	// 	})
-	// 	if err != nil {
-	// 		return err
-	// 	}
-	// }
-	// for _, pref := range objs.CommonPrefixes {
-	// 	s.Rm("/" + p.bucket + "/" + *pref.Prefix)
-	// 	_, err := client.DeleteObject(&s3.DeleteObjectInput{
-	// 		Bucket: aws.String(p.bucket),
-	// 		Key:    pref.Prefix,
-	// 	})
-	// 	if err != nil {
-	// 		return err
-	// 	}
-	// }
-
-	// if p.path == "" {
-	// 	_, err := client.DeleteBucket(&s3.DeleteBucketInput{
-	// 		Bucket: aws.String(p.bucket),
-	// 	})
-	// 	return err
-	// }
-	// _, err = client.DeleteObject(&s3.DeleteObjectInput{
-	// 	Bucket: aws.String(p.bucket),
-	// 	Key:    aws.String(p.path),
-	// })
-	// return err
-	return nil
+	p, s3backend, initErr := w.s3Init([]string{path})
+	if initErr != nil {
+		return initErr
+	}
+	return s3backend.Rm(p)
 }
 
+// Mv move
 func (w WorkspacesBackend) Mv(from string, to string) error {
-	// f := s.path(from)
-	// t := s.path(to)
-	// client := s3.New(s.createSession(f.bucket))
-
-	// if f.path == "" || strings.HasSuffix(from, "/") {
-	// 	return ErrNotImplemented
-	// }
-
-	// input := &s3.CopyObjectInput{
-	// 	Bucket:     aws.String(t.bucket),
-	// 	CopySource: aws.String(f.bucket + "/" + f.path),
-	// 	Key:        aws.String(t.path),
-	// }
-	// if s.params["encryption_key"] != "" {
-	// 	input.CopySourceSSECustomerAlgorithm = aws.String("AES256")
-	// 	input.CopySourceSSECustomerKey = aws.String(s.params["encryption_key"])
-	// 	input.SSECustomerAlgorithm = aws.String("AES256")
-	// 	input.SSECustomerKey = aws.String(s.params["encryption_key"])
-	// }
-
-	// _, err := client.CopyObject(input)
-	// if err != nil {
-	// 	return err
-	// }
-	// return s.Rm(from)
 	return nil
 }
 
+// Touch make empty object
 func (w WorkspacesBackend) Touch(path string) error {
-	// p := s.path(path)
-	// client := s3.New(s.createSession(p.bucket))
-
-	// if p.bucket == "" {
-	// 	return ErrNotValid
-	// }
-
-	// input := &s3.PutObjectInput{
-	// 	Body:          strings.NewReader(""),
-	// 	ContentLength: aws.Int64(0),
-	// 	Bucket:        aws.String(p.bucket),
-	// 	Key:           aws.String(p.path),
-	// }
-	// if s.params["encryption_key"] != "" {
-	// 	input.SSECustomerAlgorithm = aws.String("AES256")
-	// 	input.SSECustomerKey = aws.String(s.params["encryption_key"])
-	// }
-	// _, err := client.PutObject(input)
-	// return err
-	return nil
+	p, s3backend, initErr := w.s3Init([]string{path})
+	if initErr != nil {
+		return initErr
+	}
+	return s3backend.Touch(p)
 }
 
+// Save bytes
 func (w WorkspacesBackend) Save(path string, file io.Reader) error {
-	// p := s.path(path)
-
-	// if p.bucket == "" {
-	// 	return ErrNotValid
-	// }
-	// uploader := s3manager.NewUploader(s.createSession(path))
-	// input := s3manager.UploadInput{
-	// 	Body:   file,
-	// 	Bucket: aws.String(p.bucket),
-	// 	Key:    aws.String(p.path),
-	// }
-	// if s.params["encryption_key"] != "" {
-	// 	input.SSECustomerAlgorithm = aws.String("AES256")
-	// 	input.SSECustomerKey = aws.String(s.params["encryption_key"])
-	// }
-	// _, err := uploader.Upload(&input)
-	// return err
-	return nil
+	p, s3backend, initErr := w.s3Init([]string{path})
+	if initErr != nil {
+		return initErr
+	}
+	return s3backend.Save(p, file)
 }
 
-// type WioPath struct {
-// 	workspace string
-// 	path   string
-// }
+func (w WorkspacesBackend) s3Init(terms []string) (string, *s3.S3Backend, error) {
+	data := TokenSearchResponse{}
+	jsonValue, _ := json.Marshal(map[string][]string{"search_terms": terms})
+	reqErr := w.request("POST", "/api/token/search", jsonValue, &data)
+	if reqErr != nil {
+		return "", nil, reqErr
+	}
+	for key := range data.Workspaces {
+		ws := data.Workspaces[key]
+		wsPrefix := ""
+		if ws.Workspace.Root.RootType != "unmanaged" {
+			wsPrefix = fmt.Sprintf("%s/%s", ws.Workspace.Owner.Username, ws.Workspace.Name)
+		} else {
+			wsPrefix = ws.Workspace.BasePath
+		}
+		s3config := s3.S3Backend{}
+		s3params := map[string]string{
+			"access_key_id":     data.Tokens[0].Token.AccessKey,
+			"secret_access_key": data.Tokens[0].Token.SecretKey,
+			"session_token":     data.Tokens[0].Token.SessionToken,
+			"path":              "",
+			"region":            data.Tokens[0].Node.Region,
+			"endpoint":          data.Tokens[0].Node.APIURL,
+			"encryption_key":    "",
+		}
+		backend, err := s3config.Init(s3params, w.app)
+		if err != nil {
+			return "", nil, err
+		}
+		p := path.Join(ws.Workspace.Root.Bucket, ws.Workspace.Root.BasePath, wsPrefix)
+		p = fmt.Sprintf("/%s", path.Join(p, ws.Path)) // Always include root (prefix) slash
+		common.Log.Info("PATH %s", p)
+		return p, backend.(*s3.S3Backend), nil
+	}
+	return "", nil, fmt.Errorf("Something bad")
+}
 
-// func (w WorkspacesBackend) path(p string) WioPath {
-// 	sp := strings.Split(p, "/")
-// 	bucket := ""
-// 	if len(sp) > 1 {
-// 		bucket = sp[1]
-// 	}
-// 	path := ""
-// 	if len(sp) > 2 {
-// 		path = strings.Join(sp[2:], "/")
-// 	}
-
-// 	return S3Path{
-// 		bucket,
-// 		path,
-// 	}
-// }
+func (w WorkspacesBackend) request(method string, path string, body []byte, data interface{}) error {
+	u, _ := url.ParseRequestURI(w.params["endpoint"])
+	u.Path = path
+	req, _ := http.NewRequest(method, fmt.Sprintf("%v", u), nil)
+	req.Header.Add("Authorization", fmt.Sprintf("Bearer %v", w.token))
+	if body != nil {
+		bodyReader := bytes.NewBuffer(body)
+		bodyCloser := ioutil.NopCloser(bodyReader)
+		req.Body = bodyCloser
+	}
+	resp, err := w.client.Do(req)
+	if err != nil {
+		return err
+	}
+	err = json.NewDecoder(resp.Body).Decode(data)
+	return err
+}
