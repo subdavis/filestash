@@ -77,15 +77,9 @@ type TokenSearchResponse struct {
 	Workspaces map[string]TokenSearchResponseWorkspacePart `json:"workspaces"`
 }
 
-// AuthResponse login response
-type AuthResponse struct {
-	AccessToken string `json:"access_token"`
-}
-
 // WorkspacesBackend main struct
 type WorkspacesBackend struct {
 	app    *common.App
-	token  string
 	client *http.Client
 	params map[string]string
 }
@@ -108,25 +102,25 @@ func (w WorkspacesBackend) Init(params map[string]string, app *common.App) (comm
 	httpClient := &http.Client{}
 
 	// Fetch Credentials
-	u, _ := url.ParseRequestURI(params["endpoint"])
-	u.Path = "/api/auth/jwt/login"
-	resp, err := httpClient.PostForm(fmt.Sprintf("%v", u),
-		url.Values{"username": {params["username"]}, "password": {params["password"]}})
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	data := AuthResponse{}
-	err = json.NewDecoder(resp.Body).Decode(&data)
-	if err != nil {
-		return nil, err
-	}
+	// u, _ := url.ParseRequestURI(params["endpoint"])
+	// u.Path = "/api/auth/jwt/login"
+	// resp, err := httpClient.PostForm(fmt.Sprintf("%v", u),
+	// 	url.Values{"username": {params["username"]}, "password": {params["password"]}})
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// defer resp.Body.Close()
+	// data := AuthResponse{}
+	// err = json.NewDecoder(resp.Body).Decode(&data)
+	// if err != nil {
+	// 	return nil, err
+	// }
 
 	common.Log.Debug("New Workspaces Client created")
 
 	// Persist new configuration
 	w.app = app
-	w.token = data.AccessToken
+	// w.token = data.AccessToken
 	w.client = httpClient
 	w.params = params
 
@@ -308,7 +302,9 @@ func (w WorkspacesBackend) request(method string, path string, body []byte, data
 	u, _ := url.ParseRequestURI(w.params["endpoint"])
 	u.Path = path
 	req, _ := http.NewRequest(method, fmt.Sprintf("%v", u), nil)
-	req.Header.Add("Authorization", fmt.Sprintf("Bearer %v", w.token))
+	common.Log.Info(fmt.Sprintf("%v", w.params))
+	req.SetBasicAuth(w.params["username"], w.params["password"])
+	// req.Header.Add("Authorization", fmt.Sprintf("Bearer %v", w.token))
 	if body != nil {
 		bodyReader := bytes.NewBuffer(body)
 		bodyCloser := ioutil.NopCloser(bodyReader)
