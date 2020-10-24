@@ -13,25 +13,25 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
-	. "github.com/mickael-kerjean/filestash/server/common"
+	"github.com/mickael-kerjean/filestash/server/common"
 )
 
-var S3Cache AppCache
+var s3Cache common.AppCache
 
-type S3Backend struct {
+type s3Backend struct {
 	client *s3.S3
 	config *aws.Config
 	params map[string]string
 }
 
 func init() {
-	Backend.Register("s3", S3Backend{})
-	S3Cache = NewAppCache(2, 1)
+	common.Backend.Register("s3", s3Backend{})
+	s3Cache = common.NewAppCache(2, 1)
 }
 
-func (s S3Backend) Init(params map[string]string, app *App) (IBackend, error) {
+func (s s3Backend) Init(params map[string]string, app *common.App) (common.IBackend, error) {
 	if params["encryption_key"] != "" && len(params["encryption_key"]) != 32 {
-		return nil, NewError(fmt.Sprintf("Encryption key needs to be 32 characters (current: %d)", len(params["encryption_key"])), 400)
+		return nil, common.NewError(fmt.Sprintf("Encryption key needs to be 32 characters (current: %d)", len(params["encryption_key"])), 400)
 	}
 
 	if params["region"] == "" {
@@ -45,7 +45,7 @@ func (s S3Backend) Init(params map[string]string, app *App) (IBackend, error) {
 	if params["endpoint"] != "" {
 		config.Endpoint = aws.String(params["endpoint"])
 	}
-	backend := &S3Backend{
+	backend := &s3Backend{
 		config: config,
 		params: params,
 		client: s3.New(session.New(config)),
@@ -53,55 +53,55 @@ func (s S3Backend) Init(params map[string]string, app *App) (IBackend, error) {
 	return backend, nil
 }
 
-func (s S3Backend) LoginForm() Form {
-	return Form{
-		Elmnts: []FormElement{
-			FormElement{
+func (s s3Backend) LoginForm() common.Form {
+	return common.Form{
+		Elmnts: []common.FormElement{
+			{
 				Name:  "type",
 				Type:  "hidden",
 				Value: "s3",
 			},
-			FormElement{
+			{
 				Name:        "access_key_id",
 				Type:        "text",
 				Placeholder: "Access Key ID*",
 			},
-			FormElement{
+			{
 				Name:        "secret_access_key",
 				Type:        "text",
 				Placeholder: "Secret Access Key*",
 			},
-			FormElement{
+			{
 				Name:        "advanced",
 				Type:        "enable",
 				Placeholder: "Advanced",
 				Target:      []string{"s3_path", "s3_session_token", "s3_encryption_key", "s3_region", "s3_endpoint"},
 			},
-			FormElement{
+			{
 				Id:          "s3_session_token",
 				Name:        "session_token",
 				Type:        "text",
 				Placeholder: "Session Token",
 			},
-			FormElement{
+			{
 				Id:          "s3_path",
 				Name:        "path",
 				Type:        "text",
 				Placeholder: "Path",
 			},
-			FormElement{
+			{
 				Id:          "s3_encryption_key",
 				Name:        "encryption_key",
 				Type:        "text",
 				Placeholder: "Encryption Key",
 			},
-			FormElement{
+			{
 				Id:          "s3_region",
 				Name:        "region",
 				Type:        "text",
 				Placeholder: "Region",
 			},
-			FormElement{
+			{
 				Id:          "s3_endpoint",
 				Name:        "endpoint",
 				Type:        "text",
@@ -111,19 +111,19 @@ func (s S3Backend) LoginForm() Form {
 	}
 }
 
-func (s S3Backend) Meta(path string) Metadata {
+func (s s3Backend) Meta(path string) common.Metadata {
 	if path == "/" {
-		return Metadata{
-			CanCreateFile: NewBool(false),
-			CanRename:     NewBool(false),
-			CanMove:       NewBool(false),
-			CanUpload:     NewBool(false),
+		return common.Metadata{
+			CanCreateFile: common.NewBool(false),
+			CanRename:     common.NewBool(false),
+			CanMove:       common.NewBool(false),
+			CanUpload:     common.NewBool(false),
 		}
 	}
-	return Metadata{}
+	return common.Metadata{}
 }
 
-func (s S3Backend) Ls(path string) (files []os.FileInfo, err error) {
+func (s s3Backend) Ls(path string) (files []os.FileInfo, err error) {
 	files = make([]os.FileInfo, 0)
 	p := s.path(path)
 
@@ -133,11 +133,11 @@ func (s S3Backend) Ls(path string) (files []os.FileInfo, err error) {
 			return nil, err
 		}
 		for _, bucket := range b.Buckets {
-			files = append(files, &File{
+			files = append(files, &common.File{
 				FName:   *bucket.Name,
 				FType:   "directory",
 				FTime:   bucket.CreationDate.Unix(),
-				CanMove: NewBool(false),
+				CanMove: common.NewBool(false),
 			})
 		}
 		return files, nil
@@ -157,7 +157,7 @@ func (s S3Backend) Ls(path string) (files []os.FileInfo, err error) {
 		if i == 0 && *object.Key == p.path {
 			continue
 		}
-		files = append(files, &File{
+		files = append(files, &common.File{
 			FName: filepath.Base(*object.Key),
 			FType: "file",
 			FTime: object.LastModified.Unix(),
@@ -165,7 +165,7 @@ func (s S3Backend) Ls(path string) (files []os.FileInfo, err error) {
 		})
 	}
 	for _, object := range objs.CommonPrefixes {
-		files = append(files, &File{
+		files = append(files, &common.File{
 			FName: filepath.Base(*object.Prefix),
 			FType: "directory",
 		})
@@ -174,7 +174,7 @@ func (s S3Backend) Ls(path string) (files []os.FileInfo, err error) {
 	return files, err
 }
 
-func (s S3Backend) Cat(path string) (io.ReadCloser, error) {
+func (s s3Backend) Cat(path string) (io.ReadCloser, error) {
 	p := s.path(path)
 	client := s3.New(s.createSession(p.bucket))
 
@@ -198,9 +198,9 @@ func (s S3Backend) Cat(path string) (io.ReadCloser, error) {
 			obj, err = client.GetObject(input)
 			return obj.Body, err
 		} else if awsErr.Code() == "InvalidArgument" && strings.Contains(awsErr.Message(), "secret key was invalid") {
-			return nil, NewError("This file is encrypted file, you need the correct key!", 400)
+			return nil, common.NewError("This file is encrypted file, you need the correct key!", 400)
 		} else if awsErr.Code() == "AccessDenied" {
-			return nil, ErrNotAllowed
+			return nil, common.ErrNotAllowed
 		}
 		return nil, err
 	}
@@ -208,7 +208,7 @@ func (s S3Backend) Cat(path string) (io.ReadCloser, error) {
 	return obj.Body, nil
 }
 
-func (s S3Backend) Mkdir(path string) error {
+func (s s3Backend) Mkdir(path string) error {
 	p := s.path(path)
 	client := s3.New(s.createSession(p.bucket))
 
@@ -225,12 +225,13 @@ func (s S3Backend) Mkdir(path string) error {
 	return err
 }
 
-func (s S3Backend) Rm(path string) error {
+func (s s3Backend) Rm(path string) error {
 	p := s.path(path)
 	client := s3.New(s.createSession(p.bucket))
 	if p.bucket == "" {
-		return ErrNotFound
+		return common.ErrNotFound
 	} else if strings.HasSuffix(path, "/") == false {
+		// If this is an explicit object path instead of a folder
 		_, err := client.DeleteObject(&s3.DeleteObjectInput{
 			Bucket: aws.String(p.bucket),
 			Key:    aws.String(p.path),
@@ -238,7 +239,7 @@ func (s S3Backend) Rm(path string) error {
 		return err
 	}
 
-	objs, err := client.ListObjects(&s3.ListObjectsInput{
+	objs, err := client.ListObjectsV2(&s3.ListObjectsV2Input{
 		Bucket:    aws.String(p.bucket),
 		Prefix:    aws.String(p.path),
 		Delimiter: aws.String("/"),
@@ -246,6 +247,8 @@ func (s S3Backend) Rm(path string) error {
 	if err != nil {
 		return err
 	}
+
+	// Delete the object children of path/
 	for _, obj := range objs.Contents {
 		_, err := client.DeleteObject(&s3.DeleteObjectInput{
 			Bucket: aws.String(p.bucket),
@@ -255,6 +258,8 @@ func (s S3Backend) Rm(path string) error {
 			return err
 		}
 	}
+
+	// Recursively delete sub-folders
 	for _, pref := range objs.CommonPrefixes {
 		s.Rm("/" + p.bucket + "/" + *pref.Prefix)
 		_, err := client.DeleteObject(&s3.DeleteObjectInput{
@@ -272,6 +277,15 @@ func (s S3Backend) Rm(path string) error {
 		})
 		return err
 	}
+
+	/*
+		Finally, delete the null "folder" object.
+		
+		Note that in proper S3 implementations, null "folders" are automatically
+		deleted when their last real child object is removed, so this should be
+		unnecessary.  This operation will usually be a noop, but was included to
+		maintain compatibility with incorrect or sloppy third-party S3 implementations.
+	*/ 
 	_, err = client.DeleteObject(&s3.DeleteObjectInput{
 		Bucket: aws.String(p.bucket),
 		Key:    aws.String(p.path),
@@ -279,13 +293,13 @@ func (s S3Backend) Rm(path string) error {
 	return err
 }
 
-func (s S3Backend) Mv(from string, to string) error {
+func (s s3Backend) Mv(from string, to string) error {
 	f := s.path(from)
 	t := s.path(to)
 	client := s3.New(s.createSession(f.bucket))
 
 	if f.path == "" || strings.HasSuffix(from, "/") {
-		return ErrNotImplemented
+		return common.ErrNotImplemented
 	}
 
 	input := &s3.CopyObjectInput{
@@ -307,12 +321,12 @@ func (s S3Backend) Mv(from string, to string) error {
 	return s.Rm(from)
 }
 
-func (s S3Backend) Touch(path string) error {
+func (s s3Backend) Touch(path string) error {
 	p := s.path(path)
 	client := s3.New(s.createSession(p.bucket))
 
 	if p.bucket == "" {
-		return ErrNotValid
+		return common.ErrNotValid
 	}
 
 	input := &s3.PutObjectInput{
@@ -329,11 +343,11 @@ func (s S3Backend) Touch(path string) error {
 	return err
 }
 
-func (s S3Backend) Save(path string, file io.Reader) error {
+func (s s3Backend) Save(path string, file io.Reader) error {
 	p := s.path(path)
 
 	if p.bucket == "" {
-		return ErrNotValid
+		return common.ErrNotValid
 	}
 	uploader := s3manager.NewUploader(s.createSession(path))
 	input := s3manager.UploadInput{
@@ -349,10 +363,10 @@ func (s S3Backend) Save(path string, file io.Reader) error {
 	return err
 }
 
-func (s S3Backend) createSession(bucket string) *session.Session {
+func (s s3Backend) createSession(bucket string) *session.Session {
 	params := s.params
 	params["bucket"] = bucket
-	c := S3Cache.Get(params)
+	c := s3Cache.Get(params)
 	if c == nil {
 		res, err := s.client.GetBucketLocation(&s3.GetBucketLocationInput{
 			Bucket: aws.String(bucket),
@@ -366,7 +380,7 @@ func (s S3Backend) createSession(bucket string) *session.Session {
 				s.config.Region = res.LocationConstraint
 			}
 		}
-		S3Cache.Set(params, s.config.Region)
+		s3Cache.Set(params, s.config.Region)
 	} else {
 		s.config.Region = c.(*string)
 	}
@@ -375,12 +389,12 @@ func (s S3Backend) createSession(bucket string) *session.Session {
 	return sess
 }
 
-type S3Path struct {
+type s3Path struct {
 	bucket string
 	path   string
 }
 
-func (s S3Backend) path(p string) S3Path {
+func (s s3Backend) path(p string) s3Path {
 	sp := strings.Split(p, "/")
 	bucket := ""
 	if len(sp) > 1 {
@@ -391,7 +405,7 @@ func (s S3Backend) path(p string) S3Path {
 		path = strings.Join(sp[2:], "/")
 	}
 
-	return S3Path{
+	return s3Path{
 		bucket,
 		path,
 	}
